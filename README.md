@@ -2,28 +2,28 @@
 
 A local AI-powered customer-support agent built for the **Tantrabodh AI Engineer Internship Assignment**.
 
-OrbitDesk Support Agent uses **Retrieval-Augmented Generation (RAG)**, **triage-based routing**, **LangGraph orchestration**, and **response verification** to answer support questions using supplied OrbitDesk documentation and historical resolved cases.
+OrbitDesk Support Agent combines **Retrieval-Augmented Generation (RAG)**, **four-way triage**, **LangGraph orchestration**, **response verification**, bounded retry/revision, safe failure, and **JSON-schema-validated structured output**.
 
-The application runs its language model locally and does not rely on hosted LLM APIs for response generation.
+The application runs its language models locally and does not rely on hosted LLM APIs for runtime response generation.
 
 ---
 
 ## Overview
 
-A customer-support assistant should not blindly send every request to a language model.
+A customer-support assistant should not blindly send every request through a generation pipeline.
 
-OrbitDesk first classifies an incoming request and determines how it should be handled.
-
-Requests are routed into four categories:
+OrbitDesk first triages an incoming request into one of four routes:
 
 - `answerable`
 - `requires_clarification`
 - `requires_escalation`
 - `out_of_scope`
 
-Answerable requests enter the RAG pipeline, where relevant evidence is retrieved from the supplied support documents before a response is generated.
+Only answerable requests enter the RAG pipeline.
 
-The generated response is then verified against the retrieved evidence before being returned.
+For an answerable request, relevant evidence is retrieved from the supplied OrbitDesk knowledge base and historical resolved cases. A local generation model produces an evidence-grounded response, which is then verified before being returned.
+
+If verification fails, the graph allows one revision attempt. If the revised response still fails verification, the system returns a safe failure rather than presenting an unsupported answer.
 
 ---
 
@@ -35,56 +35,56 @@ The generated response is then verified against the retrieved evidence before be
                              v
                            Triage
                              |
-              +--------------+--------------+
-              |              |              |
-              v              v              v
-         Answerable     Clarification   Escalation
-              |              |              |
-              v              v              v
-             RAG            END            END
-              |
-              v
-          Retrieval
-              |
-              v
-        Augmentation
-              |
-              v
-         Generation
-              |
-              v
-          Verifier
-              |
-          +---+---+
-          |       |
-         PASS    FAIL
-          |       |
-          v       v
-         END   Revision
-                  |
-                  v
-               Verifier
-                  |
-             +----+----+
-             |         |
-            PASS      FAIL
-             |         |
-             v         v
-            END    Safe Failure
-                       |
-                       v
-                      END
+       +---------------------+---------------------+
+       |                     |                     |
+       v                     v                     v
+   Answerable        Requires Clarification   Requires Escalation
+       |                     |                     |
+       v                     v                     v
+      RAG              Clarification            Human
+       |                  Response              Support
+       v                     |                     |
+   Retrieval                 v                     v
+       |                    END                   END
+       v
+ Augmentation
+       |
+       v
+  Generation
+       |
+       v
+   Verifier
+       |
+   +---+---+
+   |       |
+  PASS    FAIL
+   |       |
+   v       v
+  END   Revision
+           |
+           v
+        Verifier
+           |
+       +---+---+
+       |       |
+      PASS    FAIL
+       |       |
+       v       v
+      END   Safe Failure
+                |
+                v
+               END
 
-Out-of-scope requests are routed directly to an appropriate boundary response.
+Out-of-scope requests are routed directly to an out-of-scope response.
 ```
 
-The workflow is orchestrated using **LangGraph**, with shared state carrying information between nodes.
+The workflow is orchestrated using **LangGraph** with shared typed state, deterministic routing functions, conditional edges, and bounded retry behaviour.
 
 ---
 
 ## RAG Pipeline
 
-For answerable requests, OrbitDesk uses a Retrieval-Augmented Generation pipeline.
+For answerable requests, OrbitDesk uses Retrieval-Augmented Generation.
 
 ```text
 Source Documents
@@ -97,7 +97,6 @@ MiniLM Embeddings
       |
       v
 Document Vectors
-
 
 User Query
       |
@@ -114,43 +113,45 @@ Top-K Retrieval
 Retrieved Evidence + Query
       |
       v
-Qwen Generation
+Local Qwen Generation
       |
       v
 Generated Answer
 ```
 
-The query and document chunks are embedded using the same embedding model.
+The query and document chunks are embedded using the same Sentence Transformer model.
 
-Cosine similarity is then used to rank chunks according to their semantic similarity with the query. The highest-ranked chunks are supplied to the local generation model as supporting evidence.
+Cosine similarity ranks the stored chunks according to their semantic similarity with the query. The highest-ranked chunks are supplied to the local generation model as evidence.
+
+Current knowledge-base documentation is treated as authoritative. Historical resolved cases are used as supporting evidence.
 
 ---
 
 ## Triage
 
-Before entering the RAG pipeline, each request passes through a triage stage.
+Triage occurs **before RAG**.
 
 ### `answerable`
 
 The request contains enough information to follow a documented OrbitDesk support path.
 
-The request proceeds to RAG.
+The request proceeds into the RAG pipeline.
 
 ### `requires_clarification`
 
-The request concerns OrbitDesk, but important information required to safely answer or diagnose it is missing.
+The request concerns OrbitDesk, but information required to safely determine the appropriate support path is missing.
 
-The workflow requests additional information instead of generating an unsupported answer.
+The system requests additional information instead of blindly generating an answer.
 
 ### `requires_escalation`
 
-The issue requires human support according to the available support rules or previous troubleshooting context.
+The available context indicates that the issue requires human support or has reached an escalation condition.
 
 ### `out_of_scope`
 
 The request falls outside the supported OrbitDesk customer-support domain.
 
-These routes are implemented using LangGraph conditional edges.
+LangGraph conditional edges route each classification to the corresponding node.
 
 ---
 
@@ -158,32 +159,32 @@ These routes are implemented using LangGraph conditional edges.
 
 Generated answers are not automatically trusted.
 
-After generation, the verifier checks the response against the retrieved evidence.
+For the answerable route, the generated response is checked against the retrieved OrbitDesk evidence.
 
-Verification currently combines deterministic checks with local model reasoning.
+Verification includes deterministic safeguards and local model-based grounding checks.
 
-Deterministic checks include:
+Deterministic checks ensure that:
 
 - retrieved evidence exists
 - source identifiers are available
 - the generated answer is not empty
 
-The model-based grounding check verifies that the response:
+The grounding check evaluates whether the generated response:
 
 - is supported by retrieved evidence
-- does not contradict the evidence
-- does not invent OrbitDesk product behaviour
-- does not invent unsupported troubleshooting instructions
+- contradicts the available evidence
+- invents OrbitDesk product behaviour
+- invents unsupported troubleshooting instructions
 
-If verification succeeds, the answer can proceed to the final response.
+A response that passes verification proceeds to the final output.
 
-If verification fails, the graph routes the response through a revision path.
+A response that fails verification is routed to the revision node.
 
 ---
 
 ## Retry and Safe Failure
 
-The workflow includes bounded retry behaviour.
+The graph implements a bounded retry path:
 
 ```text
 Generation
@@ -191,7 +192,7 @@ Generation
     v
 Verification
     |
-    +---- PASS ----> Final
+    +---- PASS ----> Final Response
     |
    FAIL
     |
@@ -201,7 +202,7 @@ Verification
     v
 Verification
     |
-    +---- PASS ----> Final
+    +---- PASS ----> Final Response
     |
    FAIL
     |
@@ -209,11 +210,63 @@ Verification
 Safe Failure
 ```
 
-A retry counter prevents indefinite revision loops.
+Only **one revision attempt** is permitted.
 
-The LangGraph invocation also uses a recursion limit as an additional orchestration safeguard.
+The workflow maintains a `retry_count`, and the LangGraph invocation also specifies a recursion limit as an additional safeguard against infinite graph execution.
 
-If the system still cannot produce a verifiable answer after the permitted revision, it returns a safe failure instead of presenting an unsupported response as reliable.
+The following paths have been manually exercised during integration testing:
+
+```text
+triage -> rag -> verifier -> END
+
+triage -> rag -> verifier -> revision -> verifier -> END
+
+triage -> rag -> verifier -> revision -> verifier
+       -> safe_failure -> END
+```
+
+---
+
+## Structured Output
+
+The completed internal graph state is converted into the response contract supplied in:
+
+```text
+data/output_schema.json
+```
+
+The required fields are:
+
+- `classification`
+- `answer`
+- `sources`
+- `confidence`
+- `requires_human`
+- `reason`
+
+Example:
+
+```json
+{
+  "classification": "answerable",
+  "answer": "No, a Viewer cannot create an API credential in OrbitDesk. Viewers require an Admin or Owner role to access developer settings and create API credentials.",
+  "sources": [
+    {
+      "source_id": "KB-005",
+      "passage": "Only Owners and Admins can create or revoke credentials. Analysts and Viewers cannot create API credentials."
+    }
+  ],
+  "confidence": 0.9,
+  "requires_human": false,
+  "reason": "The request was answerable using retrieved OrbitDesk evidence and the generated response passed verification."
+}
+```
+
+The final response is programmatically validated against the supplied JSON Schema using `jsonschema`.
+
+Schema validation has been successfully exercised on a real graph output.
+
+`confidence` is an application-level indicator and should not be interpreted as a calibrated probability.
 
 ---
 
@@ -221,7 +274,7 @@ If the system still cannot produce a verifiable answer after the permitted revis
 
 ### Embedding Model
 
-**MiniLM** via Sentence Transformers / Hugging Face.
+**sentence-transformers/all-MiniLM-L6-v2**
 
 Used for:
 
@@ -235,11 +288,11 @@ Used for:
 
 Used for:
 
-- support response generation
+- support-response generation
 - triage classification
 - semantic grounding verification
 
-The application uses a local generation model rather than a remotely hosted LLM API.
+The application uses locally executed models rather than remotely hosted OpenAI, Anthropic, Gemini, or other LLM APIs.
 
 ---
 
@@ -250,8 +303,10 @@ The application uses a local generation model rather than a remotely hosted LLM 
 - Hugging Face Transformers
 - Sentence Transformers
 - LangGraph
+- JSON Schema
+- Pytest
 - Cosine Similarity
-- Local Qwen Instruct model
+- Qwen2.5 Instruct
 
 ---
 
@@ -260,22 +315,135 @@ The application uses a local generation model rather than a remotely hosted LLM 
 ```text
 orbitdesk-support-agent/
 |
++-- data/
+|   +-- output_schema.json
+|   +-- resolved_cases.json
+|   +-- sample_questions.json
+|
++-- knowledge_base/
+|   +-- 01_product_overview.md
+|   +-- 02_roles_and_permissions.md
+|   +-- 03_workspace_settings_and_timezones.md
+|   +-- 04_scheduled_exports.md
+|   +-- 05_api_credentials.md
+|   +-- 06_connections_and_refreshes.md
+|   +-- 07_delivery_destinations.md
+|   +-- 08_escalation_and_diagnostics.md
+|   +-- 09_audit_logs.md
+|   +-- 10_security_and_safe_responses.md
+|
 +-- src/
-|   +-- retrieval.py
+|   +-- chunk_data.py
+|   +-- graph.py
+|   +-- load_data.py
+|   +-- output_formatter.py
 |   +-- rag.py
+|   +-- retrieval.py
+|   +-- test_embeddings.py
+|   +-- test_llm.py
 |   +-- triage.py
 |   +-- verifier.py
-|   +-- graph.py
 |
-+-- README.md
++-- tests/
+|   +-- test_graph_routing.py
+|
 +-- .gitignore
++-- LICENSE
++-- README.md
++-- requirements.txt
 ```
-
-The repository structure may be expanded as final tests and documentation are added.
 
 ---
 
-## Example
+## Setup
+
+### 1. Clone the repository
+
+```bash
+git clone <repository-url>
+cd orbitdesk-support-agent
+```
+
+### 2. Create a virtual environment
+
+Windows:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks script execution for the current session:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+Linux/macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+The required Hugging Face models are downloaded automatically on first use. Initial execution can therefore take longer depending on network speed and hardware.
+
+---
+
+## Running the Agent
+
+From the repository root:
+
+```bash
+python src/graph.py
+```
+
+Node execution is logged to the terminal, for example:
+
+```text
+NODE: triage
+NODE: rag
+NODE: verifier
+```
+
+The application then displays the result and the final structured JSON output.
+
+---
+
+## Testing
+
+Run the automated routing test using:
+
+```bash
+pytest tests/test_graph_routing.py -v
+```
+
+The automated test verifies routing logic without depending on the exact wording produced by the language model.
+
+Integration testing has also exercised:
+
+1. directly answerable requests
+2. ambiguous requests requiring clarification
+3. requests requiring escalation
+4. out-of-scope requests
+5. successful answer verification
+6. initial verification failure followed by revision
+7. repeated verification failure followed by safe failure
+8. bounded retry behaviour
+9. structured-output JSON-schema validation
+
+The assignment's multi-document evidence case should also be included in the final recorded/sample test evidence.
+
+---
+
+## Example Execution
 
 Input:
 
@@ -289,7 +457,7 @@ Triage:
 answerable
 ```
 
-Graph execution:
+Observed graph execution:
 
 ```text
 NODE: triage
@@ -305,10 +473,11 @@ Viewers require an Admin or Owner role to access developer
 settings and create API credentials.
 ```
 
-Retrieved evidence included:
+Retrieved sources included:
 
 ```text
 CASE-1058
+KB-005
 KB-005
 ```
 
@@ -316,79 +485,105 @@ Verification:
 
 ```text
 Verification passed: True
+Verification reason: Answer is grounded in the retrieved evidence.
 Retry count: 0
 ```
+
+The resulting structured response also passed validation against `data/output_schema.json`.
+
+---
+
+## Hardware Used
+
+The project was developed and tested locally on a Windows laptop with:
+
+- **System RAM:** 16 GB
+- **Dedicated GPU VRAM:** 4 GB
+- **GPU:** NVIDIA discrete GPU
+- **Operating System:** Windows
+
+During observed execution, approximately **3.2 GB of dedicated GPU memory** was allocated while the local models were loaded.
+
+Depending on available VRAM, Transformers/Accelerate may place or offload model parameters across GPU, CPU, and system memory.
 
 ---
 
 ## Current Status
 
-The core workflow is implemented and running:
+Core implementation:
 
-- [x] Document loading and chunking
+- [x] Source-document loading
+- [x] Chunking
 - [x] Embedding generation
-- [x] Semantic retrieval
+- [x] Query embedding
+- [x] Cosine-similarity retrieval
 - [x] RAG generation
 - [x] Four-way triage
-- [x] LangGraph orchestration
+- [x] LangGraph shared state
 - [x] Conditional routing
 - [x] Response verification
-- [x] Retry/revision routing
-- [x] Safe-failure routing
+- [x] Retry/revision path
+- [x] Re-verification
+- [x] Safe-failure path
 - [x] Infinite-loop protection
-- [ ] Complete required edge-case test suite
-- [ ] Automated graph-routing test
-- [ ] Final structured-output validation
-- [ ] Final graph diagram
-- [ ] Demo walkthrough
+- [x] Automated routing test
+- [x] Structured output
+- [x] JSON-schema validation
+
+Submission assets:
+
+- [ ] Final required test/sample outputs
+- [ ] Graph diagram (PNG/JPG)
+- [ ] Final repository compliance review
+- [ ] 4–7 minute walkthrough video
 
 ---
 
 ## Known Limitations
 
-The current implementation is intentionally lightweight and designed for the scope of the internship assignment.
+The implementation is intentionally lightweight and scoped to the internship assignment.
 
-Some current limitations include:
+Current limitations include:
 
-- Generation and semantic verification use the same local Qwen model.
+- Generation and semantic verification use the same local Qwen model, so verification is not fully independent from generation.
 - Multiple components currently initialize model instances independently, increasing memory usage and startup overhead.
-- Verification provides a lightweight grounding safeguard rather than a formal factual guarantee.
+- Verification provides a grounding safeguard rather than a formal factual guarantee.
 - Retrieval quality depends on the supplied knowledge base and embedding model.
+- Confidence values are application-level indicators rather than statistically calibrated probabilities.
+- Local inference may require CPU offloading on GPUs with limited VRAM.
 
-These are potential areas for future optimization rather than requirements for the current prototype.
-
----
-
-## Setup
-
-Detailed installation and execution instructions will be finalized after the remaining integration tests.
-
-The project requires Python and sufficient memory to run the local embedding and generation models.
-
----
-
-## Testing
-
-The final test suite will cover:
-
-1. A directly answerable request
-2. A request requiring evidence from multiple documents
-3. An ambiguous request requiring clarification
-4. An out-of-scope request
-5. A generated answer that initially fails verification
-6. Graph-routing behaviour independent of exact generated wording
-
-Test results and sample outputs will be added after final validation.
+These are potential future optimizations rather than additional features required by the current prototype.
 
 ---
 
 ## AI Assistance Disclosure
 
-AI coding assistants were used during development for explanation, debugging assistance, code review, and documentation support.
+AI coding assistants, including **ChatGPT and Claude**, were used during development for:
 
-The architecture, implementation decisions, testing, integration, and final validation were reviewed during development rather than treating AI-generated output as automatically correct.
+- concept explanation
+- architecture discussion
+- debugging assistance
+- code review
+- testing guidance
+- documentation assistance
 
-The application itself does **not** depend on ChatGPT, Claude, or another hosted LLM API for runtime response generation.
+The implementation was executed, tested, integrated, and reviewed locally.
+
+AI coding assistants are development tools only. The OrbitDesk application itself does **not** depend on ChatGPT, Claude, Gemini, or another hosted LLM API for runtime response generation.
+
+---
+
+## Security
+
+No API keys, credentials, authentication secrets, or customer secrets are included in the repository.
+
+The local virtual environment, Python caches, and temporary development files are excluded through `.gitignore`.
+
+---
+
+## License
+
+This project is licensed under the MIT License. See `LICENSE` for details.
 
 ---
 
