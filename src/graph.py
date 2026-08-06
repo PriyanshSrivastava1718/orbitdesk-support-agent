@@ -1,10 +1,14 @@
 from typing import TypedDict, Any
+import json
+
+from jsonschema import validate
 
 from langgraph.graph import StateGraph, START, END
 
 from triage import classify_question
 from rag import generate_answer
 from verifier import verify_answer
+from output_formatter import format_output
 
 
 # ==================================================
@@ -43,13 +47,7 @@ def triage_node(state: AgentState):
 def rag_node(state: AgentState):
     print("NODE: rag")
 
-    _, results = generate_answer(state["question"])
-
-    # TEST ONLY
-    answer = (
-        "Yes, Viewers can create API credentials from "
-        "Settings > Developer."
-    )
+    answer, results = generate_answer(state["question"])
 
     return {
         "answer": answer,
@@ -83,21 +81,14 @@ def verifier_node(state: AgentState):
 def revision_node(state: AgentState):
     print("NODE: revision")
 
-    _, results = generate_answer(state["question"])
-
-    # TEST ONLY:
-    # Keep the revised answer incorrect so that
-    # verification fails a second time.
-    revised_answer = (
-        "Yes, Viewers can create API credentials from "
-        "Settings > Developer."
-    )
+    revised_answer, results = generate_answer(state["question"])
 
     return {
         "answer": revised_answer,
         "retrieved_results": results,
         "retry_count": state["retry_count"] + 1
     }
+
 
 # ==================================================
 # 6. SAFE FAILURE NODE
@@ -221,17 +212,17 @@ builder.add_conditional_edges(
 )
 
 
-# REVISION GOES BACK TO VERIFIER
+# REVISION -> VERIFIER
 
 builder.add_edge("revision", "verifier")
 
 
-# SAFE FAILURE ENDS
+# SAFE FAILURE -> END
 
 builder.add_edge("safe_failure", END)
 
 
-# OTHER TRIAGE ROUTES END DIRECTLY
+# OTHER TRIAGE ROUTES -> END
 
 builder.add_edge("clarification", END)
 builder.add_edge("escalation", END)
@@ -263,6 +254,16 @@ if __name__ == "__main__":
         initial_state,
         config={"recursion_limit": 10}
     )
+
+    # Convert internal graph state into assignment output format
+    final_output = format_output(result)
+
+    with open("data/output_schema.json", "r", encoding="utf-8") as f:
+        output_schema = json.load(f)
+
+    validate(instance=final_output, schema=output_schema)
+
+    print("\nSCHEMA VALIDATION: PASSED")
 
     print("\nFINAL STATE")
 
@@ -296,3 +297,6 @@ if __name__ == "__main__":
                 "| score:",
                 round(item["score"], 4)
             )
+
+    print("\nSTRUCTURED OUTPUT")
+    print(json.dumps(final_output, indent=2))
