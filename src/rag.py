@@ -1,3 +1,4 @@
+import time
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -7,6 +8,8 @@ from retrieval import retrieve
 MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
 
+_load_start = time.time()
+
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -14,6 +17,8 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype="auto",
     device_map="auto"
 )
+
+print(f"[rag.py] Qwen load time: {time.time() - _load_start:.2f}s")
 
 
 def build_context(results):
@@ -40,10 +45,30 @@ Status: {status}
     return "\n\n---\n\n".join(context_parts)
 
 
-def generate_answer(question):
+def generate_answer(question, revision_note=None):
     results = retrieve(question, top_k=3)
 
     context = build_context(results)
+
+    user_content = f"""
+Question:
+{question}
+
+Evidence:
+{context}
+
+Answer the question concisely.
+""".strip()
+
+    if revision_note:
+        user_content += f"""
+
+Your previous answer failed verification for this reason:
+{revision_note}
+
+Revise your answer so it relies strictly on the evidence above and
+addresses that issue.
+""".rstrip()
 
     messages = [
         {
@@ -60,15 +85,7 @@ def generate_answer(question):
         },
         {
             "role": "user",
-            "content": f"""
-Question:
-{question}
-
-Evidence:
-{context}
-
-Answer the question concisely.
-""".strip()
+            "content": user_content
         }
     ]
 
@@ -80,11 +97,15 @@ Answer the question concisely.
         return_tensors="pt"
     ).to(model.device)
 
+    _gen_start = time.time()
+
     outputs = model.generate(
         **inputs,
         max_new_tokens=180,
         do_sample=False
     )
+
+    print(f"[rag.py] Generation latency: {time.time() - _gen_start:.2f}s")
 
     generated_tokens = outputs[0][inputs["input_ids"].shape[-1]:]
 

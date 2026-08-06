@@ -81,7 +81,10 @@ def verifier_node(state: AgentState):
 def revision_node(state: AgentState):
     print("NODE: revision")
 
-    revised_answer, results = generate_answer(state["question"])
+    revised_answer, results = generate_answer(
+        state["question"],
+        revision_note=state["verification_reason"]
+    )
 
     return {
         "answer": revised_answer,

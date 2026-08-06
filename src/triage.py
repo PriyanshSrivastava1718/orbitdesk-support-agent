@@ -1,3 +1,4 @@
+import time
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -12,6 +13,8 @@ ALLOWED_LABELS = {
 }
 
 
+_load_start = time.time()
+
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -19,6 +22,8 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype="auto",
     device_map="auto"
 )
+
+print(f"[triage.py] Qwen load time: {time.time() - _load_start:.2f}s")
 
 
 def classify_question(question):
@@ -100,11 +105,15 @@ Do not explain the classification.
         for key, value in inputs.items()
     }
 
+    _gen_start = time.time()
+
     outputs = model.generate(
         **inputs,
         max_new_tokens=10,
         do_sample=False
     )
+
+    print(f"[triage.py] Classification latency: {time.time() - _gen_start:.2f}s")
 
     input_length = inputs["input_ids"].shape[1]
 

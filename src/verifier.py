@@ -1,9 +1,12 @@
+import time
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
+
+_load_start = time.time()
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
@@ -12,6 +15,8 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype="auto",
     device_map="auto"
 )
+
+print(f"[verifier.py] Qwen load time: {time.time() - _load_start:.2f}s")
 
 
 def build_evidence(results):
@@ -109,11 +114,15 @@ Verification:
         return_tensors="pt"
     ).to(model.device)
 
+    _gen_start = time.time()
+
     outputs = model.generate(
         **inputs,
         max_new_tokens=5,
         do_sample=False
     )
+
+    print(f"[verifier.py] Verification latency: {time.time() - _gen_start:.2f}s")
 
     input_length = inputs["input_ids"].shape[1]
 
