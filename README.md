@@ -216,7 +216,7 @@ Required fields: `classification`, `answer`, `sources`, `confidence`, `requires_
 | Embedding | `sentence-transformers/all-MiniLM-L6-v2` | Document and query embeddings, semantic retrieval |
 | Generation | `Qwen/Qwen2.5-1.5B-Instruct` | Support-answer generation, triage classification, semantic grounding verification |
 
-Exact revisions and observed load time / response latency are recorded in [Model Details](#model-details) below.
+Qwen is a single model family reused across three responsibilities (generation, triage, verification) — it is not three separate models. Exact revisions and observed load time / response latency are recorded in [Model Details](#model-details) below.
 
 The application uses locally executed models only — no runtime dependency on a hosted LLM API.
 
@@ -227,11 +227,23 @@ The application uses locally executed models only — no runtime dependency on a
 | | Embedding model | Generation model |
 |---|---|---|
 | Model ID | `sentence-transformers/all-MiniLM-L6-v2` | `Qwen/Qwen2.5-1.5B-Instruct` |
-| Revision | _fill in exact commit hash / revision resolved at setup time_ | _fill in exact commit hash / revision resolved at setup time_ |
-| Approx. load time | _measure and fill in (seconds)_ | _measure and fill in (seconds)_ |
-| Approx. response latency | _measure and fill in (seconds per call)_ | _measure and fill in (seconds per call)_ |
+| Revision (commit SHA) | `1110a243fdf4706b3f48f1d95db1a4f5529b4d41` | `989aa7980e4cf806f80c7fef2b1adb7bc71aa306` |
 
-> These values are hardware-dependent. Measured on the hardware listed under [Hardware Used](#hardware-used).
+> Revisions were obtained directly from the Hugging Face Hub (`huggingface_hub.model_info(repo_id).sha`) for the exact model versions downloaded, since no explicit `revision=` was pinned in code.
+
+### Observed Load Time and Latency
+
+Qwen is loaded independently by three components (`triage.py`, `rag.py`, `verifier.py`); MiniLM is loaded once by `retrieval.py`. All values below are real measurements from a full graph run on the development hardware (see [Hardware Used](#hardware-used)).
+
+| Component | Load time | Task | Latency |
+|---|---|---|---|
+| MiniLM (`retrieval.py`) | 7.69s | Embed 53 KB/case chunks (one-time startup) | 1.12s |
+| MiniLM (`retrieval.py`) | — | Embed one query | 0.03s |
+| Qwen (`triage.py`) | 12.26s | Classification | 1.15s |
+| Qwen (`rag.py`) | 5.81s | Answer generation | 57.05s |
+| Qwen (`verifier.py`) | 4.01s | Grounding verification | 43.18s |
+
+> Generation and verification latency are high relative to model size (1.5B parameters) because the development GPU has 4 GB VRAM, which is insufficient to hold the full model — some parameters are offloaded to CPU/disk during inference (`"Some parameters are on the meta device because they were offloaded to the cpu and disk."`). This is a direct, observed hardware constraint, not a code inefficiency.
 
 ---
 
@@ -379,8 +391,9 @@ Developed and tested locally on a Windows laptop:
 During a full graph execution, observed resource usage was approximately:
 - System RAM: ~11.3 / 16 GB
 - Dedicated GPU memory: ~3.2 / 4.0 GB
+- GPU temperature: ~55°C
 
-Depending on available VRAM, Transformers/Accelerate may place or offload model parameters across GPU, CPU, and system memory.
+Depending on available VRAM, Transformers/Accelerate may place or offload model parameters across GPU, CPU, and system memory (observed during this run — see [Model Details](#model-details)).
 
 ---
 
@@ -400,11 +413,12 @@ Depending on available VRAM, Transformers/Accelerate may place or offload model 
 - [x] Safe-failure path
 - [x] Structured output + JSON-schema validation
 - [x] Automated routing test
+- [x] Model revisions, load time, and latency recorded
 
 **Submission assets remaining:**
-- [ ] Model revisions, load time, and latency recorded (see [Model Details](#model-details))
 - [ ] All five required test cases captured as sample outputs, including the multi-document case
 - [ ] Graph diagram exported as PNG/JPG
+- [ ] Exact CPU/GPU model names and defensible minimum hardware requirements
 - [ ] Final repository compliance pass
 - [ ] 4–7 minute walkthrough video
 
@@ -419,7 +433,7 @@ This implementation is intentionally scoped to a 3–4 hour assignment. Known li
 - **Triage is a small (1.5B) instruct model doing few-shot classification.** It performs reliably on the assignment's sample questions but, like any small LLM classifier, is not guaranteed to generalize perfectly to unseen phrasings.
 - **Confidence values are application-level indicators**, not statistically calibrated probabilities.
 - **Retrieval quality is bounded by the supplied knowledge base and a general-purpose embedding model** (not fine-tuned on OrbitDesk-specific language).
-- **CPU offloading** may occur on GPUs with limited VRAM (developed on a 4 GB card), which affects latency.
+- **CPU/disk offloading occurs during inference** because the development GPU's 4 GB VRAM cannot hold the full model, which directly explains the elevated generation/verification latency (see [Model Details](#model-details)).
 
 **With more time, I would:** decouple verification from the generation model, share a single model instance across nodes, and calibrate `confidence` against retrieval similarity and verification outcome rather than fixed per-route values.
 
