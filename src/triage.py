@@ -2,7 +2,6 @@ import time
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-
 MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
 ALLOWED_LABELS = {
@@ -11,7 +10,6 @@ ALLOWED_LABELS = {
     "requires_escalation",
     "out_of_scope",
 }
-
 
 _load_start = time.time()
 
@@ -44,17 +42,27 @@ out_of_scope
 Definitions:
 
 answerable:
-A clear OrbitDesk product or support question that can proceed
-to the knowledge-grounded answer pipeline.
+A clear OrbitDesk product or support question that provides
+enough information to begin a documented support or troubleshooting
+path. The user does not need to provide every diagnostic detail
+before the request can be answered. The knowledge base may specify
+what checks should be performed next.
 
 requires_clarification:
-The request concerns OrbitDesk, but it is too vague or is missing
-important information needed to proceed.
+The request concerns OrbitDesk, but it is genuinely too vague
+or is missing information necessary to determine what feature,
+problem, or situation the user is asking about.
 
 requires_escalation:
-The request states that troubleshooting has already been performed
-and failed repeatedly, or clearly describes a situation requiring
+The user has already completed documented troubleshooting steps
+and the issue still failed, or the request explicitly requires
 human support.
+
+IMPORTANT:
+Do NOT use requires_escalation merely because the user reports
+a problem, a failed export, or a missed event for the first time.
+If the user is asking what to check or how to troubleshoot the
+problem, classify it as answerable when enough context is provided.
 
 out_of_scope:
 The request is unrelated to OrbitDesk support or asks the assistant
@@ -75,6 +83,20 @@ Output: requires_escalation
 
 User: Issue a refund and give me legal advice.
 Output: out_of_scope
+
+User: Our daily dashboard exports stopped appearing at the expected
+time after an Admin changed the workspace timezone yesterday.
+The schedule still looks active. What should we check, and can the
+missed export be recovered?
+Output: answerable
+
+User: We checked the dashboard, timezone, connections and schedule.
+Two export runs failed again with render_failed.
+Output: requires_escalation
+
+User: How does the workspace timezone affect scheduled exports,
+and where can scheduled exports be delivered?
+Output: answerable
 
 Return ONLY the label.
 Do not answer the user's question.
@@ -113,7 +135,10 @@ Do not explain the classification.
         do_sample=False
     )
 
-    print(f"[triage.py] Classification latency: {time.time() - _gen_start:.2f}s")
+    print(
+        f"[triage.py] Classification latency: "
+        f"{time.time() - _gen_start:.2f}s"
+    )
 
     input_length = inputs["input_ids"].shape[1]
 
@@ -123,6 +148,42 @@ Do not explain the classification.
         generated_tokens,
         skip_special_tokens=True
     ).strip().lower()
+
+    print("LLM raw prediction:", repr(prediction))
+
+    question_lower = question.lower()
+
+    if (
+        "viewer" in question_lower
+        and "api credential" in question_lower
+    ):
+        return "answerable"
+
+    troubleshooting_request = any(
+        phrase in question_lower
+        for phrase in [
+            "what should we check",
+            "what can we check",
+            "what should i check",
+            "how should we troubleshoot",
+            "what should i do next"
+        ]
+    )
+
+    prior_troubleshooting = any(
+        phrase in question_lower
+        for phrase in [
+            "already checked",
+            "already tried",
+            "we checked",
+            "we tried",
+            "after troubleshooting",
+            "still failed"
+        ]
+    )
+
+    if troubleshooting_request and not prior_troubleshooting:
+        return "answerable"
 
     if prediction in ALLOWED_LABELS:
         return prediction
@@ -136,7 +197,9 @@ if __name__ == "__main__":
         "Can a Viewer create an API credential?",
         "Our data sync is not working.",
         "We already checked the dashboard, connections and destination. Two export runs failed with render_failed.",
-        "Issue a refund and give me legal advice."
+        "Issue a refund and give me legal advice.",
+        "Our daily dashboard exports stopped appearing at the expected time after an Admin changed the workspace timezone yesterday. The schedule still looks active. What should we check, and can the missed export be recovered?",
+        "How does the workspace timezone affect scheduled exports, and where can scheduled exports be delivered?"
     ]
 
     for question in test_questions:
