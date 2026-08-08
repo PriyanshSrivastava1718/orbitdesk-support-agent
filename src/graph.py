@@ -244,8 +244,7 @@ graph = builder.compile()
 if __name__ == "__main__":
 
     initial_state = {
-        "question": "Can a Viewer create an API credential?",
-        "classification": "",
+        "question": "Our daily dashboard exports stopped appearing at the expected time after an Admin changed the workspace timezone yesterday. The schedule still looks active. What should we check, and can the missed export be recovered?",        "classification": "",
         "answer": "",
         "retrieved_results": [],
         "verification_passed": False,
