@@ -425,7 +425,7 @@ The repository should contain captured outputs for the five required test cases.
 
 ## Hardware Used
 
-Developed and tested locally on a Windows laptop:
+Developed and tested locally on a Windows laptop: 
 
 - **CPU / System RAM:** 16 GB DDR5 system
 - **GPU:** NVIDIA GeForce RTX 3050 Laptop GPU, 4 GB VRAM
