@@ -36,6 +36,14 @@ failure** rather than presenting an unsupported answer.
 
 ------------------------------------------------------------------------
 
+## 🎥 Project Walkthrough
+
+[Watch the OrbitDesk Support Agent walkthrough](https://youtu.be/ktZeYnBQs-I)
+
+A short demonstration covering the workflow graph, local model execution, routing, RAG, verification, safe-failure handling, and sample runs.
+
+------------------------------------------------------------------------
+
 ## Architecture
 
 ``` text
