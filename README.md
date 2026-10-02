@@ -8,7 +8,7 @@ OrbitDesk Support Agent combines **Retrieval-Augmented Generation
 verification**, **bounded retry/revision**, **safe failure**, and
 **JSON-schema-validated structured output**.
 
-The application runs its language models locally. No hosted LLM API
+The application runs its language models locally. No hosted LLM API 
 (OpenAI, Anthropic, Gemini, or otherwise) is used for runtime response
 generation.
  
