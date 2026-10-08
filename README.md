@@ -10,7 +10,7 @@ verification**, **bounded retry/revision**, **safe failure**, and
 
 The application runs its language models locally. No hosted LLM API 
 (OpenAI, Anthropic, Gemini, or otherwise) is used for runtime response
-generation.
+generation. 
  
 ------------------------------------------------------------------------
 
